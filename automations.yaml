@@ -1,0 +1,943 @@
+- id: '1760122984895'
+  alias: Waschmaschine – Start & Fertig
+  description: 'Start: Leistung > 10 W für 1 Min. setzt input_boolean.waschmaschine_lauft.
+    Fertig: < 6 W für 5 Min. meldet nur, wenn vorher ein Start erkannt wurde (verhindert
+    Fehlmeldungen nach HA-Neustart oder Zigbee-Ausfall).'
+  triggers:
+  - above: 10
+    entity_id: sensor.waschmaschine_power
+    for:
+      minutes: 1
+    id: start
+    trigger: numeric_state
+  - below: 6
+    entity_id: sensor.waschmaschine_power
+    for:
+      minutes: 5
+    id: fertig
+    trigger: numeric_state
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: start
+      sequence:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.waschmaschine_lauft
+    - conditions:
+      - condition: trigger
+        id: fertig
+      - condition: state
+        entity_id: input_boolean.waschmaschine_lauft
+        state: 'on'
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.waschmaschine_lauft
+      - action: notify.mobile_app_ip_nadine
+        data:
+          message: Waschmaschine ist fertig!
+      - action: notify.send_message
+        data:
+          message: Waschmaschine fertig
+        target:
+          entity_id: notify.nadines_echo_durchsagen
+  mode: queued
+- id: '1760274307411'
+  alias: Müll – Abholerinnerung
+  description: 'Täglich 18:00: Gelber Sack (sensor.gelb), Restmüll (sensor.rest) und
+    Papier (Kalender calendar.papier) für morgen prüfen, eine gemeinsame Meldung an
+    Nadine. Papiertermine für 2027 im Kalender Papier nachtragen.'
+  triggers:
+  - at: '18:00:00'
+    trigger: time
+  conditions: []
+  actions:
+  - action: calendar.get_events
+    data:
+      end_date_time: '{{ (today_at() + timedelta(days=2, seconds=-1)).isoformat()
+        }}'
+      start_date_time: '{{ (today_at() + timedelta(days=1)).isoformat() }}'
+    response_variable: papier
+    target:
+      entity_id: calendar.papier
+  - variables:
+      muell: '{% set ns = namespace(l=[]) %}{% if is_state(''sensor.gelb'', ''Tomorrow'')
+        %}{% set ns.l = ns.l + [''Gelber Sack''] %}{% endif %}{% if is_state(''sensor.rest'',
+        ''Tomorrow'') %}{% set ns.l = ns.l + [''Restmüll''] %}{% endif %}{% if papier[''calendar.papier''].events
+        | count > 0 %}{% set ns.l = ns.l + [''Papier''] %}{% endif %}{{ ns.l }}'
+  - if:
+    - condition: template
+      value_template: '{{ muell | count > 0 }}'
+    then:
+    - action: notify.mobile_app_ip_nadine
+      data:
+        message: '{{ muell | join('' und '') }} morgen'
+  mode: single
+- id: '1760533933120'
+  alias: Wasseralarm Keller
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.wasseralarm_water_leak
+    from:
+    to: 'on'
+  conditions: []
+  actions:
+  - action: notify.mobile_app_iphone_von_bertram
+    metadata: {}
+    data:
+      message: Wasser im Keller
+      title: Wassermeldung
+      data:
+        push:
+          interruption-level: critical
+  - action: notify.mobile_app_ip_nadine
+    metadata: {}
+    data:
+      message: Wasser im Keller
+      data:
+        push:
+          interruption-level: critical
+      title: 'Wassermeldung '
+  mode: single
+- id: '1763122122805'
+  alias: Batterie niedrig Meldung – alle Battery+ Sensoren (vollautomatisch)
+  description: 'Meldet an Nadines iPhone, sobald ein Battery-Notes-Sensor (Battery+
+    niedrig) auf ''niedrig'' wechselt. Neuaufbau 06.10.2026: State-Trigger statt fehlerhaftem
+    Template-Trigger; keine dynamisch erzeugten input_datetime-Helfer mehr. Neue Battery+-Sensoren
+    müssen in die Trigger-Liste aufgenommen werden.'
+  triggers:
+  - entity_id:
+    - binary_sensor.ip_nadine_battery_plus_low_2
+    - binary_sensor.iphone_von_bertram_battery_plus_low
+    - binary_sensor.ipad_von_bertram_battery_plus_low
+    - binary_sensor.iphone_merle_battery_plus_low
+    - binary_sensor.iphone_tim_battery_plus_low
+    - binary_sensor.wasseralarm_battery_plus_low
+    - binary_sensor.schildkrote_1_battery_plus_low
+    - binary_sensor.schildkrote_9900_battery_plus_low
+    - binary_sensor.temperatur_0656_battery_plus_low
+    - binary_sensor.temperatur_4249_battery_plus_low
+    - binary_sensor.vordereingang_battery_plus_low
+    not_from:
+    - unavailable
+    - unknown
+    note: Nur echte Wechsel off -> on; Neustart/Verbindungsabbruch lösen keine Meldung
+      aus.
+    to: 'on'
+    trigger: state
+  conditions: []
+  actions:
+  - variables:
+      geraet: '{{ trigger.to_state.name | replace('' Batterie fast leer'', '''') }}'
+      lr: '{{ trigger.to_state.attributes.battery_last_replaced | default(none) }}'
+  - action: notify.mobile_app_ip_nadine
+    data:
+      message: '{{ geraet }} meldet eine niedrige Batterie.
+
+        Typ: {{ trigger.to_state.attributes.battery_type | default(''unbekannt'')
+        }} · Anzahl: {{ trigger.to_state.attributes.battery_quantity | default(''–'')
+        }}
+
+        Zuletzt gewechselt: {{ (lr | as_timestamp(none)) | timestamp_custom(''%d.%m.%Y'',
+        true, ''keine Angabe'') if lr else ''keine Angabe'' }}'
+      title: "\U0001F50B Batteriewarnung"
+  max: 20
+  mode: parallel
+- id: '1763122381066'
+  alias: Wochenbericht – Batteriestatus aller Sensoren
+  description: ''
+  triggers:
+  - at: 09:00:00
+    trigger: time
+  conditions:
+  - condition: time
+    weekday:
+    - sun
+  actions:
+  - variables:
+      sensors: "{{ expand(states.binary_sensor)\n    | selectattr('attributes.device_class','eq','battery')
+        \n    | list }}\n"
+      low_list: "{% for s in sensors if s.state == 'on' %}\n  • {{ s.attributes.friendly_name
+        }}  \n    \U0001F50B Typ: {{ s.attributes.battery_type | default('–') }}  \n
+        \   \U0001F522 Anzahl: {{ s.attributes.battery_quantity | default('–') }}
+        \ \n    \U0001F4C5 Letzter Wechsel: {{ s.attributes.battery_last_replaced
+        | default('keine Angabe') }}\n{% endfor %}\n"
+      ok_list: "{% for s in sensors if s.state != 'on' %}\n  • {{ s.attributes.friendly_name
+        }}  \n    \U0001F50B Typ: {{ s.attributes.battery_type | default('–') }}  \n
+        \   \U0001F522 Anzahl: {{ s.attributes.battery_quantity | default('–') }}
+        \ \n    \U0001F4C5 Letzter Wechsel: {{ s.attributes.battery_last_replaced
+        | default('keine Angabe') }}\n{% endfor %}\n"
+  - data:
+      message: "\U0001F4CA *Wochenbericht – Batteriestatus*   Datum: {{ now().strftime('%d.%m.%Y')
+        }}\n{% if low_list.strip() %} \U0001F7E5 *Batterie niedrig:* {{ low_list }}
+        {% else %} \U0001F7E9 Keine Sensoren mit niedriger Batterie!   {% endif %}\n\U0001F7E6
+        *Batterien OK:* {{ ok_list }}\n"
+    action: notify.mobile_app_ip_nadine
+  mode: single
+- id: '1766089082973'
+  alias: Alexa - Holz nachlegen Hinweis
+  description: Benachrichtigt Alexa, wenn sensor.phase auf "add wood" wechselt
+  triggers:
+  - entity_id: sensor.phase
+    to: add wood
+    trigger: state
+    enabled: true
+  conditions: []
+  actions:
+  - action: notify.send_message
+    metadata: {}
+    target:
+      entity_id: notify.nadines_echo_durchsagen
+    data:
+      message: Holz nachlegen
+  - action: notify.mobile_app_iphone_von_bertram
+    metadata: {}
+    data:
+      message: Holz Nachlegen
+  - action: notify.mobile_app_ip_nadine
+    metadata: {}
+    data:
+      message: Holz nachlegen
+  mode: single
+- id: '1766473869590'
+  alias: Schildkröte Temperatur Warnung
+  description: Benachrichtigung bei zu niedriger oder zu hoher Temperatur mit Verzögerung
+  triggers:
+  - entity_id: sensor.schildkrote_1_temperature
+    below: 4.5
+    for:
+      minutes: 5
+    trigger: numeric_state
+  - entity_id: sensor.schildkrote_1_temperature
+    above: 7.5
+    for:
+      minutes: 5
+    trigger: numeric_state
+  actions:
+  - choose:
+    - conditions:
+      - condition: numeric_state
+        entity_id: sensor.schildkrote_1_temperature
+        below: 4.5
+      sequence:
+      - data:
+          title: ❄️ Schildkröte – Temperatur zu niedrig
+          message: 'Die Temperatur liegt seit 5 Minuten unter 4,5 °C. Aktuell: {{
+            states(''sensor.schildkrote_1_temperature'') }} °C
+
+            '
+        action: notify.mobile_app_ip_nadine
+    - conditions:
+      - condition: numeric_state
+        entity_id: sensor.schildkrote_1_temperature
+        above: 7.5
+      sequence:
+      - data:
+          title: "\U0001F525 Schildkröte – Temperatur zu hoch"
+          message: 'Die Temperatur liegt seit 5 Minuten über 7,5 °C. Aktuell: {{ states(''sensor.schildkrote_1_temperature'')
+            }} °C
+
+            '
+        action: notify.mobile_app_ip_nadine
+  mode: single
+- id: '1769009415683'
+  alias: Tablet laden
+  description: Unter 20 % Steckdose Tabletpower ein, über 80 % aus. Echo-Durchsage
+    nur, wenn die Steckdose tatsächlich umschaltet (keine Doppelmeldung nach Neustart).
+  triggers:
+  - below: 20
+    entity_id: sensor.a20pro_eea_batterie
+    id: start
+    trigger: numeric_state
+  - above: 80
+    entity_id: sensor.a20pro_eea_batterie
+    id: ende
+    trigger: numeric_state
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: start
+      - condition: state
+        entity_id: switch.w20_ubea
+        state: 'off'
+      sequence:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.w20_ubea
+      - action: notify.send_message
+        data:
+          message: Tablet startet mit dem laden
+        target:
+          entity_id: notify.nadines_echo_durchsagen
+    - conditions:
+      - condition: trigger
+        id: ende
+      - condition: state
+        entity_id: switch.w20_ubea
+        state: 'on'
+      sequence:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.w20_ubea
+      - action: notify.send_message
+        data:
+          message: Tablet ist geladen
+        target:
+          entity_id: notify.nadines_echo_durchsagen
+  mode: queued
+- id: '1776804803522'
+  alias: Schilkilampe ein
+  description: ''
+  triggers:
+  - trigger: time
+    at: 06:30:00
+  - entity_id: sensor.schildkrote_1_temperature
+    below: 5
+    trigger: numeric_state
+  actions:
+  - action: switch.turn_on
+    metadata: {}
+    target:
+      device_id: 8678a40482e9967bb44048acd9c518e8
+    data: {}
+  mode: single
+- id: '1776806352734'
+  alias: 'Schilkilampe ausschalten '
+  description: ''
+  triggers:
+  - trigger: time
+    at: 09:00:00
+    weekday:
+    - mon
+    - tue
+    - wed
+    - thu
+    - fri
+    - sat
+    - sun
+  conditions: []
+  actions:
+  - action: switch.turn_off
+    metadata: {}
+    target:
+      device_id: 8678a40482e9967bb44048acd9c518e8
+    data: {}
+  mode: single
+- id: '1780751883216'
+  alias: NFC Tor – Ring Türöffner
+  description: Öffnet die Tür über den Ring Intercom wenn der NFC-Tag 'Tor' gescannt
+    wird
+  triggers:
+  - platform: tag
+    tag_id: 44c51147-112e-4103-ad24-a1814019e353
+  actions:
+  - action: button.press
+    target:
+      entity_id: button.vordereingang_tur_offnen
+  mode: single
+- id: '1791542694955'
+  alias: Updates – Erstsichtung merken & Neustart-Rückmeldung
+  description: 'Begleit-Automation zu ''Updates – Nächtliche Auto-Installation''.
+    Merkt sich in input_text.update_erstsichtung, wann HA eine neue Version für Zigbee2MQTT,
+    Matter Hub, HA OS und Raspberry-Pi-Firmware zum ersten Mal gemeldet hat (Basis
+    für die 2-Tage-Wartezeit, überlebt Neustarts). Format: kuerzel=version@unixzeit;...
+    Meldet außerdem nach einem HA-Start über script.update_meldung, ob ein neustartendes
+    Update (Core/OS/Pi-Firmware) erfolgreich war.'
+  triggers:
+  - entity_id:
+    - update.zigbee2mqtt_update
+    - update.home_assistant_matter_hub_update
+    - update.home_assistant_operating_system_update
+    - update.raspberry_pi_5_firmware
+    id: erstsichtung
+    trigger: state
+  - attribute: latest_version
+    entity_id:
+    - update.zigbee2mqtt_update
+    - update.home_assistant_matter_hub_update
+    - update.home_assistant_operating_system_update
+    - update.raspberry_pi_5_firmware
+    id: erstsichtung
+    trigger: state
+  - id: erstsichtung
+    minutes: '5'
+    trigger: time_pattern
+  - event: start
+    id: start
+    trigger: homeassistant
+  actions:
+  - alias: Neue Erstsichtungs-Liste berechnen
+    variables:
+      neu: '{%- set verz = {''update.zigbee2mqtt_update'':''z2m'',''update.home_assistant_matter_hub_update'':''mhub'',''update.home_assistant_operating_system_update'':''os'',''update.raspberry_pi_5_firmware'':''rpi''}
+        -%}
+
+        {%- set ns = namespace(alt={}, out=[]) -%}
+
+        {%- for t in states(''input_text.update_erstsichtung'').split('';'') if ''=''
+        in t and ''@'' in t -%}{%- set r = t.split(''='',1)[1] -%}{%- set ns.alt =
+        dict(ns.alt, **{t.split(''='',1)[0]: [r.rsplit(''@'',1)[0], r.rsplit(''@'',1)[1]
+        | int(0)]}) -%}{%- endfor -%}
+
+        {%- for e, k in verz.items() -%}{%- set s = states(e) -%}{%- set v = state_attr(e,''latest_version'')
+        | string -%}{%- set a = ns.alt.get(k) -%}
+
+        {%- if s == ''on'' and v not in ['''', ''None''] -%}{%- set ns.out = ns.out
+        + [k ~ ''='' ~ v ~ ''@'' ~ (a[1] if a and a[0] == v else now().timestamp()
+        | int)] -%}
+
+        {%- elif s not in [''on'',''off''] and a -%}{%- set ns.out = ns.out + [k ~
+        ''='' ~ a[0] ~ ''@'' ~ a[1]] -%}{%- endif -%}{%- endfor -%}
+
+        {{ ns.out | join('';'') }}'
+  - alias: Nur schreiben, wenn sich etwas geändert hat
+    if:
+    - condition: template
+      value_template: '{{ neu | string != states(''input_text.update_erstsichtung'')
+        }}'
+    then:
+    - action: input_text.set_value
+      data:
+        value: '{{ neu | string }}'
+      target:
+        entity_id: input_text.update_erstsichtung
+  - alias: 'Nach HA-Start: Ergebnis eines neustartenden Updates melden'
+    if:
+    - condition: trigger
+      id: start
+    - condition: template
+      value_template: '{{ states(''input_text.update_neustart_offen'').count(''|'')
+        == 2 }}'
+    then:
+    - delay:
+        minutes: 3
+    - variables:
+        teile: '{{ states(''input_text.update_neustart_offen'').split(''|'') }}'
+    - variables:
+        ist_version: '{{ state_attr(teile[0], ''installed_version'') | string }}'
+    - variables:
+        ok: '{{ ist_version == teile[2] }}'
+    - action: script.update_meldung
+      continue_on_error: true
+      data:
+        message: '{% if ok %}✅ Update erfolgreich: {{ state_attr(teile[0], ''friendly_name'')
+          }} {{ teile[1] }} → {{ teile[2] }}{% else %}⚠️ Update nicht abgeschlossen:
+          {{ state_attr(teile[0], ''friendly_name'') }} – Ziel {{ teile[2] }}, installiert
+          ist {{ ist_version }}. Bitte prüfen.{% endif %}'
+    - action: input_text.set_value
+      data:
+        value: ''
+      target:
+        entity_id: input_text.update_neustart_offen
+  max: 5
+  mode: queued
+- id: '1791542696424'
+  alias: Updates – Nächtliche Auto-Installation
+  description: 'Installiert nachts (22:00–05:00, stündlich um :10) automatisch anstehende
+    Updates. Umfang: alle Apps, alle HACS-Einträge, Geräte-Firmware (ohne Beta/RC/Alpha/Dev
+    und ohne *_beta_firmware-Entitäten), Raspberry-Pi-Firmware, HA OS und HA Core.
+    Ausgenommen: Supervisor, FRITZ!OS (Box + Repeater, Integration fritz), ESPHome,
+    Proxmox, Spook sowie Entitäten ohne Installationsfunktion. Core nur ab Patch-Version
+    .1 (x.y.0 wird übersprungen). Zigbee2MQTT, Matter Hub, HA OS und Pi-Firmware erst,
+    wenn die Version seit mind. 2 Tagen ansteht (Erstsichtung in input_text.update_erstsichtung,
+    gepflegt von ''Updates – Erstsichtung merken & Neustart-Rückmeldung''). Apps/Core/OS
+    mit Backup. Pro Lauf höchstens ein neustartendes Update (Core/OS/Pi-FW), immer
+    zuletzt. Nach erfolgreichen Updates von HACS-Integrationen (inkl. HACS selbst,
+    nicht Karten/Themes) Neustart von HA zur Aktivierung. Meldungen über script.update_meldung
+    (Markus + Nadine).'
+  triggers:
+  - minutes: '10'
+    trigger: time_pattern
+  conditions:
+  - after: '22:00:00'
+    before: 05:00:00
+    condition: time
+  actions:
+  - alias: 'Konfiguration: verzögerte Updates (2 Tage)'
+    variables:
+      verz:
+        update.home_assistant_operating_system_update: os
+        update.raspberry_pi_5_firmware: rpi
+        update.zigbee2mqtt_update: z2m
+        update.home_assistant_matter_hub_update: mhub
+  - alias: 'Konfiguration: neustartende Updates (Priorität)'
+    variables:
+      neustart_liste:
+      - update.home_assistant_core_update
+      - update.home_assistant_operating_system_update
+      - update.raspberry_pi_5_firmware
+  - variables:
+      apps: '{{ integration_entities(''hassio'') }}'
+  - variables:
+      hacs: '{{ integration_entities(''hacs'') }}'
+  - alias: Erstsichtungen einlesen
+    variables:
+      erst: '{%- set ns = namespace(d={}) -%}{%- for t in states(''input_text.update_erstsichtung'').split('';'')
+        if ''='' in t and ''@'' in t -%}{%- set r = t.split(''='',1)[1] -%}{%- set
+        ns.d = dict(ns.d, **{t.split(''='',1)[0]: [r.rsplit(''@'',1)[0], r.rsplit(''@'',1)[1]
+        | int(0)]}) -%}{%- endfor -%}{{ ns.d }}'
+  - alias: Freigegebene Updates ermitteln
+    variables:
+      kandidaten: '{%- set excl = integration_entities(''esphome'') + integration_entities(''fritz'')
+        + integration_entities(''proxmoxve'') + integration_entities(''spook'') +
+        [''update.home_assistant_supervisor_update''] -%}
+
+        {%- set ns = namespace(l=[]) -%}
+
+        {%- for s in states.update | selectattr(''state'',''eq'',''on'') -%}
+
+        {%- set e = s.entity_id -%}{%- set lv = s.attributes.latest_version | default('''',
+        true) | string -%}
+
+        {%- set ok = (s.attributes.supported_features | int(0)) | bitwise_and(1) >
+        0 and e not in excl and not s.attributes.in_progress -%}
+
+        {%- if ok and e == ''update.home_assistant_core_update'' -%}{%- set p = lv.split(''.'')
+        -%}{%- set ok = p | count >= 3 and p[2] | int(0) >= 1 -%}{%- endif -%}
+
+        {%- if ok and e not in apps and e not in hacs and (''beta'' in e or lv | lower
+        is search(''(^|[^a-z])(beta|alpha|rc|dev)'')) -%}{%- set ok = false -%}{%-
+        endif -%}
+
+        {%- if ok and e in verz -%}{%- set t = erst.get(verz[e]) -%}{%- set ok = t
+        is not none and t[0] == lv and (now().timestamp() - t[1]) >= 172800 -%}{%-
+        endif -%}
+
+        {%- if ok -%}{%- set ns.l = ns.l + [e] -%}{%- endif -%}
+
+        {%- endfor -%}
+
+        {{ ns.l }}'
+  - alias: 'Reihenfolge: Apps, HACS, Firmware'
+    variables:
+      normal: '{{ (kandidaten | select(''in'', apps) | reject(''in'', neustart_liste)
+        | list) + (kandidaten | select(''in'', hacs) | list) + (kandidaten | reject(''in'',
+        apps) | reject(''in'', hacs) | reject(''in'', neustart_liste) | list) }}'
+  - alias: Höchstens ein neustartendes Update pro Lauf
+    variables:
+      neustart_update: '{{ neustart_liste | select(''in'', kandidaten) | first | default('''')
+        }}'
+  - alias: Abbruch, wenn nichts ansteht
+    condition: template
+    value_template: '{{ normal | count > 0 or neustart_update != '''' }}'
+  - alias: Normale Updates nacheinander installieren
+    repeat:
+      for_each: '{{ normal }}'
+      sequence:
+      - variables:
+          alt_v: '{{ state_attr(repeat.item, ''installed_version'') | string }}'
+      - variables:
+          neu_v: '{{ state_attr(repeat.item, ''latest_version'') | string }}'
+      - variables:
+          name: '{{ state_attr(repeat.item, ''friendly_name'') | default(repeat.item,
+            true) }}'
+      - action: update.install
+        continue_on_error: true
+        data:
+          backup: '{{ repeat.item in apps and (state_attr(repeat.item, ''supported_features'')
+            | int(0)) | bitwise_and(8) > 0 }}'
+        target:
+          entity_id: '{{ repeat.item }}'
+      - continue_on_timeout: true
+        timeout: 01:00:00
+        wait_template: '{{ not state_attr(repeat.item, ''in_progress'') }}'
+      - delay:
+          seconds: 5
+      - variables:
+          ist_v: '{{ state_attr(repeat.item, ''installed_version'') | string }}'
+      - action: script.update_meldung
+        continue_on_error: true
+        data:
+          message: '{% if ist_v == neu_v %}✅ Update installiert: {{ name }} {{ alt_v
+            }} → {{ neu_v }}{% else %}⚠️ Update fehlgeschlagen/unvollständig: {{ name
+            }} – Ziel {{ neu_v }}, installiert ist {{ ist_v }}{% endif %}'
+  - alias: Erfolgreich aktualisierte HACS-Integrationen (ohne Karten/Themes)
+    variables:
+      hacs_integr: '{%- set ns = namespace(l=[]) -%}{%- for e in normal if e in hacs
+        and device_attr(e, ''model'') not in [''plugin'', ''theme''] and is_state(e,
+        ''off'') -%}{%- set ns.l = ns.l + [state_attr(e, ''friendly_name'') | default(e,
+        true)] -%}{%- endfor -%}{{ ns.l }}'
+  - alias: Nach HACS-Integrations-Updates HA neu starten (wenn kein Core/OS-Update
+      folgt)
+    if:
+    - condition: template
+      value_template: '{{ neustart_update == '''' and hacs_integr | count > 0 }}'
+    then:
+    - action: script.update_meldung
+      continue_on_error: true
+      data:
+        message: "\U0001F504 HACS-Integration(en) aktualisiert: {{ hacs_integr | join(',
+          ') }} – Home Assistant wird zur Aktivierung neu gestartet."
+    - delay:
+        seconds: 10
+    - action: homeassistant.restart
+  - alias: Neustartendes Update (Core / OS / Pi-FW) als letzter Schritt
+    if:
+    - condition: template
+      value_template: '{{ neustart_update != '''' }}'
+    then:
+    - variables:
+        n_alt: '{{ state_attr(neustart_update, ''installed_version'') | string }}'
+    - variables:
+        n_neu: '{{ state_attr(neustart_update, ''latest_version'') | string }}'
+    - variables:
+        n_name: '{{ state_attr(neustart_update, ''friendly_name'') | default(neustart_update,
+          true) }}'
+    - action: input_text.set_value
+      data:
+        value: '{{ neustart_update ~ ''|'' ~ n_alt ~ ''|'' ~ n_neu }}'
+      target:
+        entity_id: input_text.update_neustart_offen
+    - action: script.update_meldung
+      continue_on_error: true
+      data:
+        message: "\U0001F504 Starte Update: {{ n_name }} {{ n_alt }} → {{ n_neu }}.
+          Home Assistant/System startet dabei neu."
+    - action: update.install
+      continue_on_error: true
+      data:
+        backup: '{{ (state_attr(neustart_update, ''supported_features'') | int(0))
+          | bitwise_and(8) > 0 }}'
+      target:
+        entity_id: '{{ neustart_update }}'
+    - continue_on_timeout: true
+      timeout: 00:30:00
+      wait_template: '{{ not state_attr(neustart_update, ''in_progress'') }}'
+    - delay:
+        minutes: 1
+    - alias: 'Falls HA nicht neu gestartet hat: Ergebnis direkt melden'
+      variables:
+        n_ist: '{{ state_attr(neustart_update, ''installed_version'') | string }}'
+    - action: script.update_meldung
+      continue_on_error: true
+      data:
+        message: '{% if n_ist == n_neu %}✅ Update installiert: {{ n_name }} {{ n_alt
+          }} → {{ n_neu }} (ggf. wirkt es erst nach dem nächsten Neustart){% else
+          %}⚠️ Update nicht abgeschlossen: {{ n_name }} – Ziel {{ n_neu }}, installiert
+          ist {{ n_ist }}{% endif %}'
+    - action: input_text.set_value
+      data:
+        value: ''
+      target:
+        entity_id: input_text.update_neustart_offen
+  max_exceeded: silent
+  mode: single
+- id: '1792509769181'
+  alias: iOS-Aktion – Tor öffnen
+  description: Öffnet die Tür am Vordereingang, wenn in der iOS-Companion-App die
+    Aktion „Tor öffnen“ ausgelöst wird (Widget, Lock Screen, Apple Watch).
+  triggers:
+  - event_data:
+      actionName: Tor öffnen
+    event_type: ios.action_fired
+    trigger: event
+  actions:
+  - action: script.turn_on
+    target:
+      entity_id: script.tor_oeffnen
+  mode: single
+- id: '1792608595026'
+  alias: Internetsperre – Nachttyp bestimmen
+  description: 'Legt fest, wie die kommende Nacht für die Kindergeräte behandelt wird:
+    Schulnacht (Sperre ab 22 Uhr, wenn der Folgetag ein Schultag ist), Feriennacht
+    (ab 23 Uhr, wenn der Abend- oder Folgetag ein Ferientag ist) oder frei (Freitag/Samstag,
+    Nacht vor Feiertag). Gilt jeweils von 12 Uhr bis 12 Uhr. Quellen: calendar.ferien_berlin,
+    calendar.deutschland_be.'
+  triggers:
+  - at: '12:00:00'
+    id: mittag
+    trigger: time
+  - event: start
+    id: start
+    trigger: homeassistant
+  conditions: []
+  actions:
+  - variables:
+      abendtag: '{{ ((now().date() if now().hour < 12 else (now() + timedelta(days=1)).date())
+        - timedelta(days=1)) | string }}'
+      ende: '{{ ((now().date() if now().hour < 12 else (now() + timedelta(days=1)).date())
+        + timedelta(days=1)) | string }}'
+      folgetag: '{{ (now().date() if now().hour < 12 else (now() + timedelta(days=1)).date())
+        | string }}'
+  - action: calendar.get_events
+    data:
+      end_date_time: '{{ ende }} 00:00:00'
+      start_date_time: '{{ abendtag }} 00:00:00'
+    response_variable: kal
+    target:
+      entity_id:
+      - calendar.ferien_berlin
+      - calendar.deutschland_be
+  - variables:
+      feiertag_folgetag: '{{ kal[''calendar.deutschland_be''].events | selectattr(''start'',
+        ''le'', folgetag) | selectattr(''end'', ''gt'', folgetag) | list | count >
+        0 }}'
+      ferien_abendtag: '{{ kal[''calendar.ferien_berlin''].events | selectattr(''start'',
+        ''le'', abendtag) | selectattr(''end'', ''gt'', abendtag) | list | count >
+        0 }}'
+      ferien_folgetag: '{{ kal[''calendar.ferien_berlin''].events | selectattr(''start'',
+        ''le'', folgetag) | selectattr(''end'', ''gt'', folgetag) | list | count >
+        0 }}'
+      werktag_folgetag: '{{ (folgetag | as_datetime).weekday() < 5 }}'
+  - variables:
+      nachttyp: '{% if werktag_folgetag and not ferien_folgetag and not feiertag_folgetag
+        %}Schulnacht{% elif ferien_abendtag or ferien_folgetag %}Feriennacht{% else
+        %}frei{% endif %}'
+  - action: input_select.select_option
+    data:
+      option: '{{ nachttyp }}'
+    target:
+      entity_id: input_select.internetsperre_nachttyp
+  mode: restart
+- id: '1792608910138'
+  alias: Internetsperre – Vorlauf abgelaufen
+  description: Wenn der Vorlauf-Timer eines Kindergeräts abläuft, wird die manuelle
+    Sperre gesetzt. Die eigentliche Sperre in der FRITZ!Box setzt die Automation „Internetsperre
+    – Abgleich“.
+  triggers:
+  - event_data:
+      entity_id: timer.internetsperre_tim_iphone_vorlauf_timer
+    event_type: timer.finished
+    trigger: event
+  - event_data:
+      entity_id: timer.internetsperre_tim_laptop_vorlauf_timer
+    event_type: timer.finished
+    trigger: event
+  - event_data:
+      entity_id: timer.internetsperre_merle_iphone_vorlauf_timer
+    event_type: timer.finished
+    trigger: event
+  - event_data:
+      entity_id: timer.internetsperre_merle_tablet_vorlauf_timer
+    event_type: timer.finished
+    trigger: event
+  conditions: []
+  actions:
+  - action: input_boolean.turn_on
+    target:
+      entity_id: '{{ trigger.event.data.entity_id | replace(''timer.'', ''input_boolean.'')
+        | replace(''_vorlauf_timer'', ''_manuell'') }}'
+  max: 10
+  mode: queued
+- id: '1792608945288'
+  alias: Internetsperre – Abgleich
+  description: 'Setzt die FRITZ!Box-Schalter „Internetzugang“ der Kindergeräte auf
+    den Soll-Zustand: gesperrt = manuell gesperrt ODER (Nachtsperre aktiv UND keine
+    Überbrückung des Kindes bis zur Endzeit). Läuft bei jeder Änderung, beim HA-Start
+    und alle 5 Minuten. Zuordnung Gerät → Schalter siehe Doku Phase 0. Fremdänderungen
+    am FRITZ!Box-Schalter werden erst nach 20 s stabilem Zustand korrigiert (sonst
+    kollidieren zwei Befehle und die Integration ist kurz nicht verfügbar).'
+  triggers:
+  - entity_id:
+    - input_boolean.internetsperre_tim_iphone_manuell
+    - input_boolean.internetsperre_tim_laptop_manuell
+    - input_boolean.internetsperre_merle_iphone_manuell
+    - input_boolean.internetsperre_merle_tablet_manuell
+    - input_boolean.internetsperre_tim_uberbruckt
+    - input_boolean.internetsperre_merle_uberbruckt
+    - input_datetime.internetsperre_tim_uberbruckt_bis
+    - input_datetime.internetsperre_merle_uberbruckt_bis
+    - binary_sensor.internetsperre_nacht_aktiv
+    trigger: state
+  - entity_id:
+    - switch.pc_192_168_178_30_internetzugang
+    - switch.laptop_tim_internetzugang
+    - switch.iphone_internetzugang_2
+    - switch.pc_192_168_178_79_internetzugang
+    trigger: state
+    for:
+      seconds: 20
+    not_to:
+    - unavailable
+    - unknown
+  - at: input_datetime.internetsperre_tim_uberbruckt_bis
+    trigger: time
+  - at: input_datetime.internetsperre_merle_uberbruckt_bis
+    trigger: time
+  - event: start
+    trigger: homeassistant
+  - minutes: /5
+    trigger: time_pattern
+  conditions: []
+  actions:
+  - variables:
+      geraete:
+        merle_iphone:
+          kind: merle
+          schalter: switch.iphone_internetzugang_2
+        merle_tablet:
+          kind: merle
+          schalter: switch.pc_192_168_178_79_internetzugang
+        tim_iphone:
+          kind: tim
+          schalter: switch.pc_192_168_178_30_internetzugang
+        tim_laptop:
+          kind: tim
+          schalter: switch.laptop_tim_internetzugang
+  - variables:
+      jetzt_m: '{{ ((now().hour * 60 + now().minute) - 720) % 1440 }}'
+      nacht: '{{ is_state(''binary_sensor.internetsperre_nacht_aktiv'', ''on'') }}'
+  - repeat:
+      for_each: '{{ geraete | dictsort | list }}'
+      sequence:
+      - variables:
+          gid: '{{ repeat.item[0] }}'
+          info: '{{ repeat.item[1] }}'
+      - variables:
+          ende_m: '{% set ts = state_attr(''input_datetime.internetsperre_'' ~ info.kind
+            ~ ''_uberbruckt_bis'', ''timestamp'') | int(82800) %}{{ [((ts // 60) -
+            720) % 1440, 1080] | min }}'
+      - variables:
+          soll_gesperrt: '{{ is_state(''input_boolean.internetsperre_'' ~ gid ~ ''_manuell'',
+            ''on'') or (nacht and not (is_state(''input_boolean.internetsperre_''
+            ~ info.kind ~ ''_uberbruckt'', ''on'') and jetzt_m | int < ende_m | int))
+            }}'
+      - if:
+        - condition: template
+          value_template: '{{ states(info.schalter) in [''on'', ''off''] and (is_state(info.schalter,
+            ''on'') == soll_gesperrt) }}'
+        then:
+        - else:
+          - action: switch.turn_on
+            target:
+              entity_id: '{{ info.schalter }}'
+          if:
+          - condition: template
+            value_template: '{{ soll_gesperrt }}'
+          then:
+          - action: switch.turn_off
+            target:
+              entity_id: '{{ info.schalter }}'
+        - delay:
+            seconds: 2
+  max: 5
+  mode: queued
+- id: '1792608960278'
+  alias: Internetsperre – Rücksetzen 06:00
+  description: 'Um 06:00 enden manuelle Sperren, laufende Vorläufe und Überbrückungen
+    der Nachtsperre (Vorgabe: manuelle Sperre spätestens bis 06:00, Überbrückung gilt
+    für eine Nacht).'
+  triggers:
+  - at: 06:00:00
+    trigger: time
+  conditions: []
+  actions:
+  - action: timer.cancel
+    target:
+      entity_id:
+      - timer.internetsperre_tim_iphone_vorlauf_timer
+      - timer.internetsperre_tim_laptop_vorlauf_timer
+      - timer.internetsperre_merle_iphone_vorlauf_timer
+      - timer.internetsperre_merle_tablet_vorlauf_timer
+  - action: input_boolean.turn_off
+    target:
+      entity_id:
+      - input_boolean.internetsperre_tim_iphone_manuell
+      - input_boolean.internetsperre_tim_laptop_manuell
+      - input_boolean.internetsperre_merle_iphone_manuell
+      - input_boolean.internetsperre_merle_tablet_manuell
+      - input_boolean.internetsperre_tim_uberbruckt
+      - input_boolean.internetsperre_merle_uberbruckt
+  mode: single
+- id: '1792608961812'
+  alias: Internetsperre – Vorwarnung Nachtsperre
+  description: 10 Minuten vor Beginn der Nachtsperre (21:50 in Schulnächten, 22:50
+    in Feriennächten) Ansage auf dem Echo und Push auf das iPhone des Kindes – nur
+    für Kinder ohne Überbrückung.
+  triggers:
+  - at: '21:50:00'
+    id: schulnacht
+    trigger: time
+  - at: '22:50:00'
+    id: feriennacht
+    trigger: time
+  conditions:
+  - condition: or
+    conditions:
+    - condition: and
+      conditions:
+      - condition: trigger
+        id: schulnacht
+      - condition: state
+        entity_id: input_select.internetsperre_nachttyp
+        state: Schulnacht
+    - condition: and
+      conditions:
+      - condition: trigger
+        id: feriennacht
+      - condition: state
+        entity_id: input_select.internetsperre_nachttyp
+        state: Feriennacht
+  actions:
+  - if:
+    - condition: state
+      entity_id: input_boolean.internetsperre_tim_uberbruckt
+      state: 'off'
+    then:
+    - action: notify.send_message
+      continue_on_error: true
+      data:
+        message: Tim, in 10 Minuten beginnt die Nachtsperre. Dein Internet geht dann
+          aus.
+      target:
+        entity_id:
+        - notify.echo_sprechen
+        - notify.iphone_tim
+  - if:
+    - condition: state
+      entity_id: input_boolean.internetsperre_merle_uberbruckt
+      state: 'off'
+    then:
+    - action: notify.send_message
+      continue_on_error: true
+      data:
+        message: Merle, in 10 Minuten beginnt die Nachtsperre. Dein Internet geht
+          dann aus.
+      target:
+        entity_id:
+        - notify.merle_sprechen
+        - notify.iphone_merle
+  mode: single
+- id: '1792609637312'
+  alias: GitHub Backup – Täglicher Git Push
+  description: Startet täglich um 03:00 Uhr die SSH-App neu, um die Home-Assistant-Konfiguration
+    per Git auf GitHub (KarstenBertram/HA_Backup) zu sichern.
+  triggers:
+  - at: 03:00:00
+    trigger: time
+  actions:
+  - action: script.git_backup
+  mode: single
+- id: '1792609686162'
+  alias: Git-Backup Fehler melden
+  description: Meldet an Nadines iPhone und Markus' Pixel, wenn das Git-Backup (init_command
+    der SSH-App) in input_text.git_backup_status einen Fehler zurückmeldet (Commit
+    FEHLER / Push FEHLER).
+  triggers:
+  - entity_id: input_text.git_backup_status
+    not_to:
+    - unavailable
+    - unknown
+    trigger: state
+  conditions:
+  - '{{ ''FEHLER'' in trigger.to_state.state }}'
+  actions:
+  - action: notify.mobile_app_ip_nadine
+    continue_on_error: true
+    data:
+      message: '⚠️ Git-Backup fehlgeschlagen: {{ trigger.to_state.state }}. Details
+        im Log der SSH-App.'
+      title: Home Assistant Backup
+  - action: notify.mobile_app_pixel_11_pro_xl
+    continue_on_error: true
+    data:
+      message: '⚠️ Git-Backup bei Karsten fehlgeschlagen: {{ trigger.to_state.state
+        }}. Details im Log der SSH-App.'
+      title: Home Assistant Karsten Backup
+  mode: queued

@@ -1,0 +1,13 @@
+battery_notes 3.7.2
+browser_mod 3.4.0
+fritzbox_anrufe 1.6.0
+hacs 2.0.5
+haseiq 0.3.0
+solakon_one 1.7.0
+solcast_solar v4.6.2
+spook 5.11.1
+spook_calibration 5.11.1
+spook_inverse 5.11.1
+spook_time_in_state 5.11.1
+waste_collection_schedule 2.35.0
+world_cup_2026 4.4.5

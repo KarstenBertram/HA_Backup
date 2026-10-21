@@ -1,0 +1,295 @@
+update_meldung:
+  alias: Update-Meldung senden
+  description: Sendet Meldungen der Update-Automationen an Markus (Pixel 11 Pro XL)
+    und Nadine (iPhone). Empfänger nur hier pflegen.
+  fields:
+    message:
+      name: Nachricht
+      required: true
+      selector:
+        text:
+          multiline: true
+  icon: mdi:update
+  max: 20
+  mode: queued
+  sequence:
+  - action: notify.mobile_app_pixel_11_pro_xl
+    continue_on_error: true
+    data:
+      message: '{{ message }}'
+      title: HA Karsten – Updates
+  - action: notify.mobile_app_ip_nadine
+    continue_on_error: true
+    data:
+      message: '{{ message }}'
+      title: HA Karsten – Updates
+tor_oeffnen:
+  alias: Tor öffnen (Vordereingang)
+  description: Öffnet die Tür am Vordereingang über den Ring Intercom. Wird vom iOS-Widget
+    (Aktion „Tor öffnen“) und Kurzbefehlen genutzt.
+  icon: mdi:gate-open
+  mode: single
+  sequence:
+  - action: button.press
+    target:
+      entity_id: button.vordereingang_tur_offnen
+internetsperre_sperren:
+  alias: Internetsperre – Gerät sperren
+  description: Sperrt ein Kindergerät nach der eingestellten Vorlaufzeit (0 = sofort).
+    Startet den Vorlauf-Timer und kündigt die Sperre auf Echo und iPhone des Kindes
+    an.
+  fields:
+    ansage:
+      default: true
+      description: Kind per Echo und iPhone vorwarnen
+      name: Ansage
+      selector:
+        boolean: {}
+    geraet:
+      name: Gerät
+      required: true
+      selector:
+        select:
+          options:
+          - label: Tim iPhone
+            value: tim_iphone
+          - label: Tim Laptop
+            value: tim_laptop
+          - label: Merle iPhone
+            value: merle_iphone
+          - label: Merle Tablet
+            value: merle_tablet
+  icon: mdi:lock-clock
+  max: 10
+  mode: parallel
+  sequence:
+  - variables:
+      geraete:
+        merle_iphone:
+          kind: merle
+          name: iPhone
+        merle_tablet:
+          kind: merle
+          name: Tablet
+        tim_iphone:
+          kind: tim
+          name: iPhone
+        tim_laptop:
+          kind: tim
+          name: Laptop
+      kinder:
+        merle:
+          kanaele:
+          - notify.merle_sprechen
+          - notify.iphone_merle
+          name: Merle
+        tim:
+          kanaele:
+          - notify.echo_sprechen
+          - notify.iphone_tim
+          name: Tim
+  - variables:
+      geraetename: '{{ geraete[geraet].name }}'
+      kind: '{{ geraete[geraet].kind }}'
+      vorlauf: '{{ states(''input_number.internetsperre_'' ~ geraet ~ ''_vorlauf'')
+        | int(5) }}'
+  - condition: template
+    value_template: '{{ is_state(''input_boolean.internetsperre_'' ~ geraet ~ ''_manuell'',
+      ''off'') }}'
+  - else:
+    - action: timer.start
+      data:
+        duration: '{{ ''%02d:%02d:00'' | format(vorlauf | int // 60, vorlauf | int
+          % 60) }}'
+      target:
+        entity_id: timer.internetsperre_{{ geraet }}_vorlauf_timer
+    - if:
+      - condition: template
+        value_template: '{{ ansage }}'
+      then:
+      - action: notify.send_message
+        continue_on_error: true
+        data:
+          message: '{{ kinder[kind].name }}, dein {{ geraetename }} geht in {{ vorlauf
+            }} {{ ''Minute'' if vorlauf | int == 1 else ''Minuten'' }} offline.'
+        target:
+          entity_id: '{{ kinder[kind].kanaele }}'
+    if:
+    - condition: template
+      value_template: '{{ vorlauf | int == 0 }}'
+    then:
+    - action: timer.cancel
+      target:
+        entity_id: timer.internetsperre_{{ geraet }}_vorlauf_timer
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.internetsperre_{{ geraet }}_manuell
+internetsperre_freigeben:
+  alias: Internetsperre – Gerät freigeben
+  description: Bricht einen laufenden Vorlauf ab und hebt die manuelle Sperre eines
+    Kindergeräts auf. Während einer aktiven Nachtsperre bleibt das Gerät gesperrt
+    (dafür Überbrückung nutzen).
+  fields:
+    geraet:
+      name: Gerät
+      required: true
+      selector:
+        select:
+          options:
+          - label: Tim iPhone
+            value: tim_iphone
+          - label: Tim Laptop
+            value: tim_laptop
+          - label: Merle iPhone
+            value: merle_iphone
+          - label: Merle Tablet
+            value: merle_tablet
+  icon: mdi:lock-open-variant
+  max: 10
+  mode: parallel
+  sequence:
+  - action: timer.cancel
+    target:
+      entity_id: timer.internetsperre_{{ geraet }}_vorlauf_timer
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.internetsperre_{{ geraet }}_manuell
+internetsperre_kind_sperren:
+  alias: Internetsperre – alle Geräte eines Kindes sperren
+  description: Startet für jedes Gerät des Kindes die Sperre mit dessen eigener Vorlaufzeit.
+    Eine gemeinsame Ansage statt einer pro Gerät.
+  fields:
+    kind:
+      name: Kind
+      required: true
+      selector:
+        select:
+          options:
+          - label: Tim
+            value: tim
+          - label: Merle
+            value: merle
+  icon: mdi:account-lock
+  max: 4
+  mode: parallel
+  sequence:
+  - variables:
+      kinder:
+        merle:
+          geraete:
+          - merle_iphone
+          - merle_tablet
+          kanaele:
+          - notify.merle_sprechen
+          - notify.iphone_merle
+          name: Merle
+        tim:
+          geraete:
+          - tim_iphone
+          - tim_laptop
+          kanaele:
+          - notify.echo_sprechen
+          - notify.iphone_tim
+          name: Tim
+  - variables:
+      minuten: '{{ kinder[kind].geraete | map(''regex_replace'', ''^(.*)$'', ''input_number.internetsperre_\\1_vorlauf'')
+        | map(''states'') | map(''int'', 5) | min }}'
+  - repeat:
+      for_each: '{{ kinder[kind].geraete }}'
+      sequence:
+      - action: script.internetsperre_sperren
+        data:
+          ansage: false
+          geraet: '{{ repeat.item }}'
+  - if:
+    - condition: template
+      value_template: '{{ minuten | int > 0 }}'
+    then:
+    - action: notify.send_message
+      continue_on_error: true
+      data:
+        message: '{{ kinder[kind].name }}, dein Internet geht in {{ minuten }} {{
+          ''Minute'' if minuten | int == 1 else ''Minuten'' }} aus.'
+      target:
+        entity_id: '{{ kinder[kind].kanaele }}'
+internetsperre_kind_freigeben:
+  alias: Internetsperre – alle Geräte eines Kindes freigeben
+  description: Bricht Vorläufe ab und hebt die manuelle Sperre aller Geräte eines
+    Kindes auf. Eine aktive Nachtsperre bleibt bestehen (dafür Überbrückung nutzen).
+  fields:
+    kind:
+      name: Kind
+      required: true
+      selector:
+        select:
+          options:
+          - label: Tim
+            value: tim
+          - label: Merle
+            value: merle
+  icon: mdi:account-lock-open
+  max: 4
+  mode: parallel
+  sequence:
+  - variables:
+      kinder:
+        merle:
+        - merle_iphone
+        - merle_tablet
+        tim:
+        - tim_iphone
+        - tim_laptop
+  - repeat:
+      for_each: '{{ kinder[kind] }}'
+      sequence:
+      - action: script.internetsperre_freigeben
+        data:
+          geraet: '{{ repeat.item }}'
+internetsperre_uberbrucken:
+  alias: Internetsperre – Nachtsperre überbrücken
+  description: Überbrückt die Nachtsperre für ein Kind bis zur eingestellten Endzeit
+    (input_datetime.internetsperre_<kind>_uberbruckt_bis, höchstens 06:00). Gilt für
+    eine Nacht; um 06:00 automatisch zurückgesetzt. Mit aufheben=true wird die Überbrückung
+    beendet.
+  fields:
+    aufheben:
+      default: false
+      name: Überbrückung aufheben
+      selector:
+        boolean: {}
+    kind:
+      name: Kind
+      required: true
+      selector:
+        select:
+          options:
+          - label: Tim
+            value: tim
+          - label: Merle
+            value: merle
+  icon: mdi:weather-night
+  max: 4
+  mode: parallel
+  sequence:
+  - else:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.internetsperre_{{ kind }}_uberbruckt
+    if:
+    - condition: template
+      value_template: '{{ aufheben }}'
+    then:
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.internetsperre_{{ kind }}_uberbruckt
+git_backup:
+  alias: Git-Backup auslösen
+  description: Startet die App Advanced SSH & Web Terminal neu. Deren init_command
+    committet alle Änderungen in /homeassistant und pusht sie nach GitHub (KarstenBertram/HA_Backup).
+    Ergebnis in input_text.git_backup_status und im App-Log ([GIT] ...).
+  icon: mdi:source-branch-sync
+  mode: single
+  sequence:
+  - action: hassio.addon_restart
+    data:
+      addon: a0d7b954_ssh
