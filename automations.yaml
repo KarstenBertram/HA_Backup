@@ -941,3 +941,63 @@
         }}. Details im Log der SSH-App.'
       title: Home Assistant Karsten Backup
   mode: queued
+- id: '1792658484852'
+  alias: Internetsperre – Meldung bei Änderung durch Kinder
+  description: Benachrichtigt Karsten und Nadine, wenn ein Nicht-Administrator (Tim,
+    Merle, Wandtablet Küche) eine Einstellung der Internetsperre oder einen FRITZ!Box-Schalter
+    eines Kindergeräts ändert. Erkennung über den Benutzer im Kontext der Zustandsänderung.
+  triggers:
+  - entity_id:
+    - input_boolean.internetsperre_tim_iphone_manuell
+    - input_boolean.internetsperre_tim_laptop_manuell
+    - input_boolean.internetsperre_merle_iphone_manuell
+    - input_boolean.internetsperre_merle_tablet_manuell
+    - input_boolean.internetsperre_tim_uberbruckt
+    - input_boolean.internetsperre_merle_uberbruckt
+    - input_datetime.internetsperre_tim_uberbruckt_bis
+    - input_datetime.internetsperre_merle_uberbruckt_bis
+    - input_number.internetsperre_tim_iphone_vorlauf
+    - input_number.internetsperre_tim_laptop_vorlauf
+    - input_number.internetsperre_merle_iphone_vorlauf
+    - input_number.internetsperre_merle_tablet_vorlauf
+    - input_select.internetsperre_nachttyp
+    - switch.pc_192_168_178_30_internetzugang
+    - switch.laptop_tim_internetzugang
+    - switch.iphone_internetzugang_2
+    - switch.pc_192_168_178_79_internetzugang
+    not_from:
+    - unavailable
+    - unknown
+    not_to:
+    - unavailable
+    - unknown
+    trigger: state
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.to_state.context.user_id in [''47589c47940d4db28c6d3904a1043ffa'',
+      ''ef25b621767f403c80adcf758a137e99'', ''df10c78ddf0d4c148122b021673fa9d8'']
+      }}'
+  actions:
+  - variables:
+      benutzer:
+        47589c47940d4db28c6d3904a1043ffa: Merle
+        df10c78ddf0d4c148122b021673fa9d8: Wandtablet Küche
+        ef25b621767f403c80adcf758a137e99: Tim
+  - variables:
+      text: '{{ benutzer[trigger.to_state.context.user_id] }} hat „{{ trigger.to_state.name
+        }}“ geändert: {{ trigger.from_state.state }} → {{ trigger.to_state.state }}
+        ({{ now().strftime(''%H:%M'') }} Uhr)'
+      was: '{{ trigger.to_state.name }}'
+      wer: '{{ benutzer[trigger.to_state.context.user_id] }}'
+  - action: notify.mobile_app_iphone_von_bertram
+    continue_on_error: true
+    data:
+      message: '{{ text }}'
+      title: Internetsperre geändert
+  - action: notify.mobile_app_ip_nadine
+    continue_on_error: true
+    data:
+      message: '{{ text }}'
+      title: Internetsperre geändert
+  max: 20
+  mode: queued
