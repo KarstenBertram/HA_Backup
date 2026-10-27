@@ -9,5 +9,5 @@ spook 5.11.1
 spook_calibration 5.11.1
 spook_inverse 5.11.1
 spook_time_in_state 5.11.1
-waste_collection_schedule 2.35.0
+waste_collection_schedule 2.36.0
 world_cup_2026 4.4.5
