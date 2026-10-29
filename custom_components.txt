@@ -1,5 +1,5 @@
 battery_notes 3.7.2
-browser_mod 3.4.0
+browser_mod 3.4.1
 fritzbox_anrufe 1.6.0
 hacs 2.0.5
 haseiq 0.3.0
