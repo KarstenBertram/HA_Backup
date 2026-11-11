@@ -1001,3 +1001,31 @@
       title: Internetsperre geändert
   max: 20
   mode: queued
+- id: '1794328483297'
+  alias: Updates – Proxmox Auto-Update-Meldung (Webhook)
+  description: Empfängt die Zusammenfassung des wöchentlichen Auto-Updates vom Proxmox-Host
+    (pve 192.168.178.10, /usr/local/sbin/lxc-autoupdate.sh, Mo 03:30) per lokalem
+    Webhook. Legt eine persistente Benachrichtigung an und sendet die Meldung über
+    script.update_meldung (Markus + Nadine). Erwartet JSON {title, message}. Eingerichtet
+    10.11.2026.
+  triggers:
+  - allowed_methods:
+    - POST
+    local_only: true
+    trigger: webhook
+    webhook_id: proxmox-autoupdate-k7q2m9x4
+  actions:
+  - variables:
+      text: '{{ trigger.json.message | default(''(keine Details)'', true) }}'
+      titel: '{{ trigger.json.title | default(''Proxmox Auto-Update'', true) }}'
+  - action: persistent_notification.create
+    data:
+      message: '{{ text }}'
+      notification_id: proxmox_autoupdate
+      title: '{{ titel }}'
+  - action: script.update_meldung
+    continue_on_error: true
+    data:
+      message: "\U0001F5A5️ {{ titel }}\n{{ text }}"
+  max: 10
+  mode: queued
