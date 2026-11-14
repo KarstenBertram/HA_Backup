@@ -440,17 +440,19 @@
 - id: '1791542696424'
   alias: Updates – Nächtliche Auto-Installation
   description: 'Installiert nachts (22:00–05:00, stündlich um :10) automatisch anstehende
-    Updates. Umfang: alle Apps, alle HACS-Einträge, Geräte-Firmware (ohne Beta/RC/Alpha/Dev
-    und ohne *_beta_firmware-Entitäten), Raspberry-Pi-Firmware, HA OS und HA Core.
-    Ausgenommen: Supervisor, FRITZ!OS (Box + Repeater, Integration fritz), ESPHome,
-    Proxmox, Spook sowie Entitäten ohne Installationsfunktion. Core nur ab Patch-Version
-    .1 (x.y.0 wird übersprungen). Zigbee2MQTT, Matter Hub, HA OS und Pi-Firmware erst,
-    wenn die Version seit mind. 2 Tagen ansteht (Erstsichtung in input_text.update_erstsichtung,
-    gepflegt von ''Updates – Erstsichtung merken & Neustart-Rückmeldung''). Apps/Core/OS
-    mit Backup. Pro Lauf höchstens ein neustartendes Update (Core/OS/Pi-FW), immer
-    zuletzt. Nach erfolgreichen Updates von HACS-Integrationen (inkl. HACS selbst,
-    nicht Karten/Themes) Neustart von HA zur Aktivierung. Meldungen über script.update_meldung
-    (Markus + Nadine).'
+    Updates. Umfang: alle Apps, alle Marketplace-Einträge (ehem. HACS; seit HA 2026.11
+    Domain marketplace), Geräte-Firmware (ohne Beta/RC/Alpha/Dev und ohne *_beta_firmware-Entitäten),
+    Raspberry-Pi-Firmware, HA OS und HA Core. Ausgenommen: Supervisor, FRITZ!OS (Box
+    + Repeater, Integration fritz), ESPHome, Proxmox, Spook sowie Entitäten ohne Installationsfunktion.
+    Core nur ab Patch-Version .1 (x.y.0 wird übersprungen). Zigbee2MQTT, Matter Hub,
+    HA OS und Pi-Firmware erst, wenn die Version seit mind. 2 Tagen ansteht (Erstsichtung
+    in input_text.update_erstsichtung, gepflegt von ''Updates – Erstsichtung merken
+    & Neustart-Rückmeldung''). Apps/Core/OS mit Backup. Pro Lauf höchstens ein neustartendes
+    Update (Core/OS/Pi-FW), immer zuletzt. Nach erfolgreichen Updates von Marketplace-Integrationen
+    (nicht Karten/Themes) Neustart von HA zur Aktivierung. Marketplace-Integrationen
+    werden zurückgestellt, solange ein HA-Core-Update ansteht (Schutz vor Integrationen,
+    die eine neuere HA-Version voraussetzen); der Lauf um 22:10 meldet sie einmal.
+    Meldungen über script.update_meldung (Markus + Nadine).'
   triggers:
   - minutes: '10'
     trigger: time_pattern
@@ -475,7 +477,9 @@
   - variables:
       apps: '{{ integration_entities(''hassio'') }}'
   - variables:
-      hacs: '{{ integration_entities(''hacs'') }}'
+      hacs: '{{ integration_entities(''marketplace'') + integration_entities(''hacs'')
+        }}'
+    alias: Marketplace-Einträge (ehem. HACS, seit 2026.11 Domain marketplace)
   - alias: Erstsichtungen einlesen
     variables:
       erst: '{%- set ns = namespace(d={}) -%}{%- for t in states(''input_text.update_erstsichtung'').split('';'')
@@ -505,6 +509,10 @@
         is search(''(^|[^a-z])(beta|alpha|rc|dev)'')) -%}{%- set ok = false -%}{%-
         endif -%}
 
+        {%- if ok and e in hacs and device_attr(e, ''model'') == ''integration'' and
+        is_state(''update.home_assistant_core_update'', ''on'') -%}{%- set ok = false
+        -%}{%- endif -%}
+
         {%- if ok and e in verz -%}{%- set t = erst.get(verz[e]) -%}{%- set ok = t
         is not none and t[0] == lv and (now().timestamp() - t[1]) >= 172800 -%}{%-
         endif -%}
@@ -514,6 +522,13 @@
         {%- endfor -%}
 
         {{ ns.l }}'
+  - alias: 'Zurückgestellt: Marketplace-Integrationen, solange ein Core-Update ansteht'
+    variables:
+      zurueckgestellt: '{%- set ns = namespace(l=[]) -%}{%- if is_state(''update.home_assistant_core_update'',
+        ''on'') -%}{%- for s in states.update | selectattr(''state'',''eq'',''on'')
+        if s.entity_id in hacs and device_attr(s.entity_id, ''model'') == ''integration''
+        -%}{%- set ns.l = ns.l + [state_attr(s.entity_id, ''friendly_name'') | default(s.entity_id,
+        true)] -%}{%- endfor -%}{%- endif -%}{{ ns.l }}'
   - alias: 'Reihenfolge: Apps, HACS, Firmware'
     variables:
       normal: '{{ (kandidaten | select(''in'', apps) | reject(''in'', neustart_liste)
@@ -523,6 +538,20 @@
     variables:
       neustart_update: '{{ neustart_liste | select(''in'', kandidaten) | first | default('''')
         }}'
+  - alias: Zurückgestellte Updates einmal pro Nacht melden (Lauf 22:10)
+    if:
+    - condition: template
+      value_template: '{{ zurueckgestellt | count > 0 }}'
+    - condition: time
+      after: '22:00:00'
+      before: '23:00:00'
+    then:
+    - action: script.update_meldung
+      continue_on_error: true
+      data:
+        message: '⏸ Marketplace-Integrationen zurückgestellt, bis HA Core {{ state_attr(''update.home_assistant_core_update'',
+          ''latest_version'') }} installiert ist: {{ zurueckgestellt | join('', '')
+          }}'
   - alias: Abbruch, wenn nichts ansteht
     condition: template
     value_template: '{{ normal | count > 0 or neustart_update != '''' }}'
