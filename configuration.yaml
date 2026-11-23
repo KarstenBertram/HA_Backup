@@ -11,11 +11,11 @@ scene: !include scenes.yaml
 
 sensor:
   #nächste Restmüll-Abholung
-  - platform: waste_collection_schedule
-    name: "Waste"
-    value_template: '{{value.types|join(", ")}}{% if value.daysTo == 0 %} Heute{% elif value.daysTo == 1 %} Morgen{% else %} in {{value.daysTo}} tagen{% endif %}'
-    types:
-      - Restmüll
+#  - platform: waste_collection_schedule
+#    name: "Waste"
+#    value_template: '{{value.types|join(", ")}}{% if value.daysTo == 0 %} Heute{% elif value.daysTo == 1 %} Morgen{% else %} in {{value.daysTo}} tagen{% endif %}'
+#    types:
+#      - Restmüll
 
 alexa:
   smart_home:
