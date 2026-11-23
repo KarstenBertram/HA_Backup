@@ -297,9 +297,11 @@ batterie_wochenbericht:
   alias: Batterie-Wochenbericht erstellen und senden
   description: 'Erstellt den Batteriebericht für alle Battery-Notes-Geräte mit Wechselbatterie
     (ohne Handys/Tablets der Mobile App und ohne Ausnahmen) und sendet ihn an die
-    übergebenen notify-Aktionen. Einstufung: ausgefallen = nicht erreichbar oder seit
-    stumm_stunden kein Wert irgendeiner Entität; niedrig = Battery Notes meldet niedrig;
-    sonst OK. Angelegt 23.11.2026.'
+    übergebenen notify-Aktionen. Einstufung: ausgefallen = keine Entität des Geräts
+    erreichbar oder laut Battery Notes seit mindestens 1 Tag kein Batteriestand gemeldet;
+    niedrig = Battery Notes meldet niedrig oder Stand unter niedrig_grenze; sonst
+    OK. Angelegt 23.11.2026, Regel für stumm am 23.11.2026 auf Battery Notes umgestellt
+    (robust gegen HA-Neustarts, keine Fehlalarme bei ruhenden Kontakten).'
   fields:
     empfaenger:
       description: Liste von notify-Aktionen, z. B. notify.mobile_app_ip_nadine
@@ -323,7 +325,9 @@ batterie_wochenbericht:
       raise_events: false
     note: 'Nur lesen: Geräte unter der Battery-Notes-Schwelle.'
     response_variable: bn_low
-  - note: 'Ausnahmen: Ring Vordereingang ist fest verkabelt (23.11.2026).'
+  - note: 'Ausnahmen: Ring Vordereingang ist fest verkabelt (23.11.2026). niedrig_grenze:
+      zusätzlich zur Battery-Notes-Schwelle gilt jeder Stand darunter als niedrig
+      (0 = nur Battery Notes).'
     variables:
       ausnahmen:
       - sensor.vordereingang_battery_plus
@@ -333,7 +337,7 @@ batterie_wochenbericht:
         %}{% endfor %}{{ ns.d }}'
       niedrig_ids: '{{ bn_low.check_battery_battery_low | map(attribute=''device_id'')
         | list }}'
-      stumm_stunden: 24
+      niedrig_grenze: 0
   - variables:
       geraete: '{% set bn = integration_entities(''battery_notes'') %}{% set funkname
         = {''mqtt'': ''Zigbee'', ''matter'': ''Thread/Matter''} %}{% set ns = namespace(l=[])
@@ -343,25 +347,25 @@ batterie_wochenbericht:
         %}{% if funk != ''mobile_app'' %}{% set ents = device_entities(d) | reject(''in'',
         bn) | select(''match'', ''(sensor|binary_sensor)\.'') | list %}{% set live
         = expand(ents) | rejectattr(''state'', ''in'', [''unavailable'', ''unknown''])
-        | list %}{% set zuletzt = (live | map(attribute=''last_reported'') | map(''as_timestamp'')
-        | max) if live else none %}{% set bnd = device_entities(d) | select(''in'',
-        bn) | list %}{% set typ_e = bnd | select(''search'', ''_battery_type'') |
-        first %}{% set wechsel_e = bnd | select(''search'', ''_battery_last_replaced'')
-        | first %}{% set m = bn_meldung.get(d) %}{% set stand = states(e) | float
-        | round(0) | int if is_number(states(e)) else ((m[''stand''] | round(0) |
-        int) if m and m[''stand''] is not none else none) %}{% if not live %}{% set
-        status = ''ausgefallen'' %}{% set grund = ''nicht erreichbar'' %}{% elif zuletzt
-        < as_timestamp(now()) - stumm_stunden * 3600 %}{% set status = ''ausgefallen''
-        %}{% set grund = ''keine Werte seit '' ~ (zuletzt | timestamp_custom(''%d.%m.
-        %H:%M'')) %}{% elif d in niedrig_ids %}{% set status = ''niedrig'' %}{% set
-        grund = '''' %}{% else %}{% set status = ''ok'' %}{% set grund = '''' %}{%
-        endif %}{% set ns.l = ns.l + [{''name'': device_attr(d, ''name_by_user'')
-        or device_attr(d, ''name''), ''funk'': funkname.get(funk, funk), ''status'':
+        | list %}{% set bnd = device_entities(d) | select(''in'', bn) | list %}{%
+        set typ_e = bnd | select(''search'', ''_battery_type'') | first %}{% set wechsel_e
+        = bnd | select(''search'', ''_battery_last_replaced'') | first %}{% set m
+        = bn_meldung.get(d) %}{% set stand = states(e) | float | round(0) | int if
+        is_number(states(e)) else ((m[''stand''] | round(0) | int) if m and m[''stand'']
+        is not none else none) %}{% if not live %}{% set status = ''ausgefallen''
+        %}{% set grund = ''nicht erreichbar'' %}{% elif m %}{% set status = ''ausgefallen''
+        %}{% set grund = ''seit '' ~ m[''tage''] ~ '' Tag(en) kein Batteriestand gemeldet''
+        %}{% elif d in niedrig_ids or (stand is not none and stand < niedrig_grenze)
+        %}{% set status = ''niedrig'' %}{% set grund = '''' %}{% else %}{% set status
+        = ''ok'' %}{% set grund = '''' %}{% endif %}{% set ns.l = ns.l + [{''name'':
+        [area_name(d), device_attr(d, ''name_by_user'') or device_attr(d, ''name'')]
+        | select | join('' – ''), ''funk'': funkname.get(funk, funk), ''status'':
         status, ''grund'': grund, ''stand'': stand, ''typ'': states(typ_e) if typ_e
         else ''–'', ''gewechselt'': (as_timestamp(states(wechsel_e), none) | timestamp_custom(''%d.%m.%Y'',
         true, ''–'')) if wechsel_e else ''–'', ''bat_tage'': m[''tage''] if m else
         0, ''bat_datum'': (as_timestamp(m[''datum''], none) | timestamp_custom(''%d.%m.%Y'',
-        true, ''–'')) if m else ''''}] %}{% endif %}{% endfor %}{{ ns.l }}'
+        true, ''–'')) if m else ''''}] %}{% endif %}{% endfor %}{{ ns.l | sort(attribute=''name'')
+        }}'
   - variables:
       hinweise: '{% set h = [] %}{% set zb = geraete | selectattr(''funk'', ''eq'',
         ''Zigbee'') | list %}{% if zb and not is_state(''binary_sensor.zigbee2mqtt_bridge_connection_state'',
