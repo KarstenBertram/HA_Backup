@@ -293,3 +293,106 @@ git_backup:
   - action: hassio.addon_restart
     data:
       addon: a0d7b954_ssh
+batterie_wochenbericht:
+  alias: Batterie-Wochenbericht erstellen und senden
+  description: 'Erstellt den Batteriebericht für alle Battery-Notes-Geräte mit Wechselbatterie
+    (ohne Handys/Tablets der Mobile App und ohne Ausnahmen) und sendet ihn an die
+    übergebenen notify-Aktionen. Einstufung: ausgefallen = nicht erreichbar oder seit
+    stumm_stunden kein Wert irgendeiner Entität; niedrig = Battery Notes meldet niedrig;
+    sonst OK. Angelegt 23.11.2026.'
+  fields:
+    empfaenger:
+      description: Liste von notify-Aktionen, z. B. notify.mobile_app_ip_nadine
+      example: '["notify.mobile_app_ip_nadine"]'
+      name: Empfänger
+      required: true
+      selector:
+        object: {}
+  icon: mdi:battery-alert-variant-outline
+  mode: single
+  sequence:
+  - action: battery_notes.check_battery_last_reported
+    data:
+      days_last_reported: 1
+      raise_events: false
+    note: 'Nur lesen: Geräte, deren Batteriestand seit mindestens 1 Tag nicht gemeldet
+      wurde (Battery Notes speichert das dauerhaft, auch über Neustarts).'
+    response_variable: bn_meld
+  - action: battery_notes.check_battery_low
+    data:
+      raise_events: false
+    note: 'Nur lesen: Geräte unter der Battery-Notes-Schwelle.'
+    response_variable: bn_low
+  - note: 'Ausnahmen: Ring Vordereingang ist fest verkabelt (23.11.2026).'
+    variables:
+      ausnahmen:
+      - sensor.vordereingang_battery_plus
+      bn_meldung: '{% set ns = namespace(d={}) %}{% for x in bn_meld.check_battery_last_reported
+        %}{% set ns.d = dict(ns.d, **{x.device_id: {''tage'': x.battery_last_reported_days,
+        ''stand'': x.battery_last_reported_level, ''datum'': x.battery_last_reported}})
+        %}{% endfor %}{{ ns.d }}'
+      niedrig_ids: '{{ bn_low.check_battery_battery_low | map(attribute=''device_id'')
+        | list }}'
+      stumm_stunden: 24
+  - variables:
+      geraete: '{% set bn = integration_entities(''battery_notes'') %}{% set funkname
+        = {''mqtt'': ''Zigbee'', ''matter'': ''Thread/Matter''} %}{% set ns = namespace(l=[])
+        %}{% for e in bn | select(''match'', ''sensor\..*_battery_plus(_\d+)?$'')
+        | reject(''in'', ausnahmen) %}{% set d = device_id(e) %}{% set ids = (device_attr(d,
+        ''identifiers'') or []) | list %}{% set funk = ids[0][0] if ids else ''unbekannt''
+        %}{% if funk != ''mobile_app'' %}{% set ents = device_entities(d) | reject(''in'',
+        bn) | select(''match'', ''(sensor|binary_sensor)\.'') | list %}{% set live
+        = expand(ents) | rejectattr(''state'', ''in'', [''unavailable'', ''unknown''])
+        | list %}{% set zuletzt = (live | map(attribute=''last_reported'') | map(''as_timestamp'')
+        | max) if live else none %}{% set bnd = device_entities(d) | select(''in'',
+        bn) | list %}{% set typ_e = bnd | select(''search'', ''_battery_type'') |
+        first %}{% set wechsel_e = bnd | select(''search'', ''_battery_last_replaced'')
+        | first %}{% set m = bn_meldung.get(d) %}{% set stand = states(e) | float
+        | round(0) | int if is_number(states(e)) else ((m[''stand''] | round(0) |
+        int) if m and m[''stand''] is not none else none) %}{% if not live %}{% set
+        status = ''ausgefallen'' %}{% set grund = ''nicht erreichbar'' %}{% elif zuletzt
+        < as_timestamp(now()) - stumm_stunden * 3600 %}{% set status = ''ausgefallen''
+        %}{% set grund = ''keine Werte seit '' ~ (zuletzt | timestamp_custom(''%d.%m.
+        %H:%M'')) %}{% elif d in niedrig_ids %}{% set status = ''niedrig'' %}{% set
+        grund = '''' %}{% else %}{% set status = ''ok'' %}{% set grund = '''' %}{%
+        endif %}{% set ns.l = ns.l + [{''name'': device_attr(d, ''name_by_user'')
+        or device_attr(d, ''name''), ''funk'': funkname.get(funk, funk), ''status'':
+        status, ''grund'': grund, ''stand'': stand, ''typ'': states(typ_e) if typ_e
+        else ''–'', ''gewechselt'': (as_timestamp(states(wechsel_e), none) | timestamp_custom(''%d.%m.%Y'',
+        true, ''–'')) if wechsel_e else ''–'', ''bat_tage'': m[''tage''] if m else
+        0, ''bat_datum'': (as_timestamp(m[''datum''], none) | timestamp_custom(''%d.%m.%Y'',
+        true, ''–'')) if m else ''''}] %}{% endif %}{% endfor %}{{ ns.l }}'
+  - variables:
+      hinweise: '{% set h = [] %}{% set zb = geraete | selectattr(''funk'', ''eq'',
+        ''Zigbee'') | list %}{% if zb and not is_state(''binary_sensor.zigbee2mqtt_bridge_connection_state'',
+        ''on'') %}{% set h = h + [''Zigbee2MQTT ist offline: Die Zigbee-Geräte fallen
+        vermutlich deshalb aus, nicht wegen der Batterie.''] %}{% endif %}{% set th
+        = geraete | selectattr(''funk'', ''eq'', ''Thread/Matter'') | list %}{% if
+        th | count > 1 and th | selectattr(''status'', ''eq'', ''ausgefallen'') |
+        list | count == th | count %}{% set h = h + [''Alle Thread/Matter-Geräte sind
+        offline: vermutlich Border Router oder Matter-Server, nicht die Batterien.'']
+        %}{% endif %}{{ h }}'
+      nachricht: "{% set aus = geraete | selectattr('status', 'eq', 'ausgefallen')
+        | list %}{% set low = geraete | selectattr('status', 'eq', 'niedrig') | list
+        %}{% set ok = geraete | selectattr('status', 'eq', 'ok') | list %}{% for x
+        in hinweise %}⚠️ {{ x }}\n{% endfor %}{% if aus %}\U0001F7E7 Ausgefallen ({{
+        aus | count }}):\n{% for g in aus %}• {{ g.name }} ({{ g.funk }}): {{ g.grund
+        }}. Letzter Batteriestand {{ g.stand ~ ' %' if g.stand is not none else 'unbekannt'
+        }}{{ ' am ' ~ g.bat_datum if g.bat_datum else '' }}. Batterie: {{ g.typ }}\n{%
+        endfor %}{% endif %}{% if low %}\U0001F7E5 Batterie niedrig ({{ low | count
+        }}):\n{% for g in low %}• {{ g.name }}: {{ g.stand }} %. Batterie: {{ g.typ
+        }}\n{% endfor %}{% endif %}{% if not aus and not low %}\U0001F7E9 Keine Batterie
+        niedrig, kein Gerät ausgefallen.\n{% endif %}{% if ok %}\U0001F7E6 OK ({{
+        ok | count }}):\n{% for g in ok %}• {{ g.name }}: {{ g.stand }} % (gewechselt
+        {{ g.gewechselt }}){{ ', Batteriestand seit ' ~ g.bat_tage ~ ' Tagen nicht
+        gemeldet' if g.bat_tage >= 7 else '' }}\n{% endfor %}{% endif %}"
+  - note: Ein nicht erreichbares Handy soll die Meldung an die anderen nicht verhindern.
+    repeat:
+      for_each: '{{ empfaenger }}'
+      sequence:
+      - action: '{{ repeat.item }}'
+        continue_on_error: true
+        data:
+          message: '{{ nachricht }}'
+          title: "\U0001F50B Batterie-Wochenbericht {{ now().strftime('%d.%m.%Y')
+            }}"

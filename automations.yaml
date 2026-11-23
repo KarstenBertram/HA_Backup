@@ -109,7 +109,9 @@
   description: 'Meldet an Nadines iPhone, sobald ein Battery-Notes-Sensor (Battery+
     niedrig) auf ''niedrig'' wechselt. Neuaufbau 06.10.2026: State-Trigger statt fehlerhaftem
     Template-Trigger; keine dynamisch erzeugten input_datetime-Helfer mehr. Neue Battery+-Sensoren
-    müssen in die Trigger-Liste aufgenommen werden.'
+    müssen in die Trigger-Liste aufgenommen werden. Erweiterung 23.11.2026: zweiter
+    Auslöser (id ausfall) meldet Geräte mit Wechselbatterie, die 12 h nicht erreichbar
+    sind, an Nadine und Karsten.'
   triggers:
   - entity_id:
     - binary_sensor.ip_nadine_battery_plus_low_2
@@ -130,27 +132,77 @@
       aus.
     to: 'on'
     trigger: state
+    id: niedrig
+  - trigger: state
+    entity_id:
+    - sensor.wasseralarm_battery_plus
+    - sensor.schildkrote_1_battery_plus
+    - sensor.schildkrote_9900_battery_plus
+    - sensor.temperatur_0656_battery_plus
+    - sensor.temperatur_4249_battery_plus
+    to: unavailable
+    for:
+      hours: 12
+    id: ausfall
+    note: Gerät mit Wechselbatterie seit 12 h nicht erreichbar (23.11.2026). Die 12
+      h beginnen nach einem HA-Neustart neu.
   conditions: []
   actions:
-  - variables:
-      geraet: '{{ trigger.to_state.name | replace('' Batterie fast leer'', '''') }}'
-      lr: '{{ trigger.to_state.attributes.battery_last_replaced | default(none) }}'
-  - action: notify.mobile_app_ip_nadine
-    data:
-      message: '{{ geraet }} meldet eine niedrige Batterie.
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: ausfall
+      sequence:
+      - variables:
+          geraet: '{{ device_attr(device_id(trigger.entity_id), ''name_by_user'')
+            or device_attr(device_id(trigger.entity_id), ''name'') }}'
+          zigbee: '{{ (device_attr(device_id(trigger.entity_id), ''identifiers'')
+            | list | first | first) == ''mqtt'' }}'
+          letzter: '{{ trigger.from_state.state if is_number(trigger.from_state.state)
+            else none }}'
+      - action: notify.mobile_app_ip_nadine
+        data:
+          title: "\U0001F50B Gerät ausgefallen"
+          message: '{{ geraet }} ist seit 12 Stunden nicht erreichbar.{{ '' Letzter
+            Batteriestand: '' ~ (letzter | float | round(0) | int) ~ '' %.'' if letzter
+            is not none else '''' }}{{ '' Achtung: Zigbee2MQTT ist offline, vermutlich
+            nicht die Batterie.'' if zigbee and not is_state(''binary_sensor.zigbee2mqtt_bridge_connection_state'',
+            ''on'') else '' Bitte Batterie prüfen.'' }}'
+        continue_on_error: true
+      - action: notify.mobile_app_iphone_von_bertram
+        data:
+          title: "\U0001F50B Gerät ausgefallen"
+          message: '{{ geraet }} ist seit 12 Stunden nicht erreichbar.{{ '' Letzter
+            Batteriestand: '' ~ (letzter | float | round(0) | int) ~ '' %.'' if letzter
+            is not none else '''' }}{{ '' Achtung: Zigbee2MQTT ist offline, vermutlich
+            nicht die Batterie.'' if zigbee and not is_state(''binary_sensor.zigbee2mqtt_bridge_connection_state'',
+            ''on'') else '' Bitte Batterie prüfen.'' }}'
+        continue_on_error: true
+    default:
+    - variables:
+        geraet: '{{ trigger.to_state.name | replace('' Batterie fast leer'', '''')
+          }}'
+        lr: '{{ trigger.to_state.attributes.battery_last_replaced | default(none)
+          }}'
+    - action: notify.mobile_app_ip_nadine
+      data:
+        message: '{{ geraet }} meldet eine niedrige Batterie.
 
-        Typ: {{ trigger.to_state.attributes.battery_type | default(''unbekannt'')
-        }} · Anzahl: {{ trigger.to_state.attributes.battery_quantity | default(''–'')
-        }}
+          Typ: {{ trigger.to_state.attributes.battery_type | default(''unbekannt'')
+          }} · Anzahl: {{ trigger.to_state.attributes.battery_quantity | default(''–'')
+          }}
 
-        Zuletzt gewechselt: {{ (lr | as_timestamp(none)) | timestamp_custom(''%d.%m.%Y'',
-        true, ''keine Angabe'') if lr else ''keine Angabe'' }}'
-      title: "\U0001F50B Batteriewarnung"
+          Zuletzt gewechselt: {{ (lr | as_timestamp(none)) | timestamp_custom(''%d.%m.%Y'',
+          true, ''keine Angabe'') if lr else ''keine Angabe'' }}'
+        title: "\U0001F50B Batteriewarnung"
   max: 20
   mode: parallel
 - id: '1763122381066'
   alias: Wochenbericht – Batteriestatus aller Sensoren
-  description: ''
+  description: 'Sonntags 09:00 Batteriebericht an Nadine und Karsten. Inhalt und Einstufung
+    im Skript script.batterie_wochenbericht (ausgefallen / niedrig / OK). Umbau 23.11.2026:
+    alter Ablauf brach wegen Zustandsobjekten in Variablen ab und wertete nicht erreichbare
+    Geräte als OK.'
   triggers:
   - at: 09:00:00
     trigger: time
@@ -159,25 +211,11 @@
     weekday:
     - sun
   actions:
-  - variables:
-      sensors: "{{ expand(states.binary_sensor)\n    | selectattr('attributes.device_class','eq','battery')
-        \n    | list }}\n"
-      low_list: "{% for s in sensors if s.state == 'on' %}\n  • {{ s.attributes.friendly_name
-        }}  \n    \U0001F50B Typ: {{ s.attributes.battery_type | default('–') }}  \n
-        \   \U0001F522 Anzahl: {{ s.attributes.battery_quantity | default('–') }}
-        \ \n    \U0001F4C5 Letzter Wechsel: {{ s.attributes.battery_last_replaced
-        | default('keine Angabe') }}\n{% endfor %}\n"
-      ok_list: "{% for s in sensors if s.state != 'on' %}\n  • {{ s.attributes.friendly_name
-        }}  \n    \U0001F50B Typ: {{ s.attributes.battery_type | default('–') }}  \n
-        \   \U0001F522 Anzahl: {{ s.attributes.battery_quantity | default('–') }}
-        \ \n    \U0001F4C5 Letzter Wechsel: {{ s.attributes.battery_last_replaced
-        | default('keine Angabe') }}\n{% endfor %}\n"
-  - data:
-      message: "\U0001F4CA *Wochenbericht – Batteriestatus*   Datum: {{ now().strftime('%d.%m.%Y')
-        }}\n{% if low_list.strip() %} \U0001F7E5 *Batterie niedrig:* {{ low_list }}
-        {% else %} \U0001F7E9 Keine Sensoren mit niedriger Batterie!   {% endif %}\n\U0001F7E6
-        *Batterien OK:* {{ ok_list }}\n"
-    action: notify.mobile_app_ip_nadine
+  - action: script.batterie_wochenbericht
+    data:
+      empfaenger:
+      - notify.mobile_app_ip_nadine
+      - notify.mobile_app_iphone_von_bertram
   mode: single
 - id: '1766089082973'
   alias: Alexa - Holz nachlegen Hinweis
